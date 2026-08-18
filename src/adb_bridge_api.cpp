@@ -5,6 +5,7 @@
 // Adicionar uma função nova aqui = 1 linha no ffi.cdef do init.lua.
 
 #include "adb_host.hpp"
+#include "adb_sync.hpp"
 #include "adb_transport.hpp"
 
 #include <cstring>
@@ -65,6 +66,15 @@ extern "C"
     {
         std::string msg;
         bool ok = adb::transport::root(safe_serial(serial), msg);
+        if (out_message)
+            *out_message = dup_cstr(msg);
+        return ok ? 1 : 0;
+    }
+
+    int adb_unroot(const char *serial, char **out_message)
+    {
+        std::string msg;
+        bool ok = adb::transport::unroot(safe_serial(serial), msg);
         if (out_message)
             *out_message = dup_cstr(msg);
         return ok ? 1 : 0;
