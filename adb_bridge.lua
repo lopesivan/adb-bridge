@@ -1,15 +1,20 @@
 return {
     {
-        "lopesivan/adb-bridge", -- ajuste para o seu repo quando publicar
-
-        cmd = {
+        "lopesivan/adb-bridge",
+        cmd    = {
             "AdbShell",
             "AdbDevices",
+            "AdbDevicesL",
+            "AdbState",
+            "AdbRoot",
+            "AdbRemount",
+            "AdbReboot",
+            "AdbTcpip"
         },
 
-        build = "make",
+        build  = "make",
 
-        opts = {
+        opts   = {
             lib_path = nil, -- nil = busca automática
             serial   = nil, -- nil = usa único device conectado
         },
