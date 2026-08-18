@@ -10,6 +10,15 @@ return {
             "AdbRemount",
             "AdbReboot",
             "AdbTcpip"
+            "AdbTap",
+            "AdbSwipe",
+            "AdbKeyevent",
+            "AdbText",
+            "AdbStart",
+            "AdbPm",
+            "AdbSettings",
+            "AdbUiAutomator",
+            "AdbUninstall",
         },
 
         build  = "make",
