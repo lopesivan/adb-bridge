@@ -1,89 +1,136 @@
 # adb-bridge
 
 Plugin para Neovim que fala diretamente com o `adb server` local
-(`127.0.0.1:5037`) via protocolo host do ADB, usando LuaJIT FFI. Evita
-fork+exec do binário `adb` a cada chamada. Implementado em C++17.
+(`127.0.0.1:5037`) via protocolo ADB, usando LuaJIT FFI. Evita `fork+exec`
+do binário `adb` a cada chamada. Implementado em C++17.
 
 ## Requisitos
 
 - `g++` com suporte a C++17
-- `adb server` rodando (`adb start-server` — geralmente já está, se você
-  usa o SDK do Android normalmente)
+- `adb server` rodando (`adb start-server`)
 
-## Estrutura do projeto
+## Estrutura
 
-```
+```text
 src/
-├── adb_connection.hpp/.cpp  -- RAII: socket + framing do protocolo (base)
-├── adb_host.hpp/.cpp        -- serviços "host:" (devices, devices-l, version)
-├── adb_transport.hpp/.cpp   -- serviços por-device (shell, root, remount, reboot, tcpip)
-└── adb_bridge_api.cpp       -- fachada extern "C", único arquivo visível pra FFI
+├── adb_connection.hpp/.cpp  -- RAII do socket, framing host e I/O binário
+├── adb_host.hpp/.cpp        -- serviços host: (devices, devices-l, version)
+├── adb_transport.hpp/.cpp   -- shell, state, root/unroot, remount, reboot, tcpip, forward
+├── adb_sync.hpp/.cpp        -- subprotocolo binário sync: para push/pull
+└── adb_bridge_api.cpp       -- fachada extern "C" consumida pelo LuaJIT FFI
 ```
 
-Pra adicionar um serviço novo do protocolo adb:
-1. Função nova em `adb_host.cpp` ou `adb_transport.cpp` (conforme o caso)
-2. Wrapper `extern "C"` em `adb_bridge_api.cpp` (converte `std::string` → `char*`)
-3. Entrada no `ffi.cdef` de `lua/adb-bridge/init.lua`
-4. Função Lua + `:UserCommand` correspondente
+A regra de extensão é:
 
-A classe `adb::Connection` (em `adb_connection.hpp`) nunca precisa mudar —
-ela só implementa o framing do protocolo, não os comandos específicos.
+1. implementar o serviço no namespace C++ apropriado;
+2. exportar um wrapper `extern "C"` em `adb_bridge_api.cpp` quando Lua precisar chamá-lo;
+3. declarar o símbolo no `ffi.cdef`;
+4. expor a função Lua e, quando útil, um `:UserCommand`.
+
+Wrappers como `input`, `am`, `pm`, `settings`, `tap` e `swipe` reutilizam
+`adb_shell()` e não precisam de novos símbolos C++.
 
 ## Build
 
-```
+```sh
 make
 ```
 
-Gera `adb_bridge.so` na raiz do projeto.
+Gera `adb_bridge.so` na raiz do plugin.
 
-## Uso
+## Comandos Neovim
 
 ```vim
-:AdbShell ls
-:AdbShell ls -la /sdcard
 :AdbDevices
 :AdbDevicesL
+:AdbVersion
 :AdbState
+:AdbShell ls -la /sdcard
+
 :AdbRoot
+:AdbUnroot
 :AdbRemount
 :AdbReboot
 :AdbReboot bootloader
 :AdbTcpip 5555
+:AdbForward tcp:8080 tcp:8080
+
+:AdbPush ./arquivo.txt /sdcard/arquivo.txt
+:AdbPull /sdcard/arquivo.txt ./arquivo.txt
+:AdbInstall ./app.apk
+
+:AdbInput keyevent KEYCODE_HOME
+:AdbTap 500 800
+:AdbSwipe 500 1200 500 300 400
+:AdbKeyevent KEYCODE_HOME
+:AdbText Ola
+
+:AdbAm force-stop com.example.app
+:AdbStart -n com.example.app/.MainActivity
+:AdbPm list packages
+:AdbSettings get system screen_brightness
+:AdbUiAutomator dump /sdcard/window.xml
+:AdbUninstall com.example.app
 ```
 
-Cada comando abre um split horizontal scratch com a saída.
-
-Via Lua:
+## API Lua
 
 ```lua
 local adb = require("adb-bridge")
-local out = adb.shell("ls /sdcard")
-print(out)
+
+adb.devices()
+adb.devices_l()
+adb.version()
+adb.get_state()
+adb.shell("getprop ro.product.model")
+
+adb.root()
+adb.unroot()
+adb.remount()
+adb.reboot("bootloader")
+adb.tcpip(5555)
+adb.forward("tcp:8080", "tcp:8080")
+
+adb.push("./arquivo.txt", "/sdcard/arquivo.txt")
+adb.pull("/sdcard/arquivo.txt", "./arquivo.txt")
+adb.install("./app.apk")
+
+adb.tap(500, 800)
+adb.swipe(500, 1200, 500, 300, 400)
+adb.keyevent("KEYCODE_HOME")
+adb.text("Ola")
 ```
 
 ## Como funciona
 
-1. Lua chama `adb_shell(serial, cmd)` via FFI
-2. C abre socket TCP para `127.0.0.1:5037` (o daemon `adb server`)
-3. Envia `host:transport-any` (ou `host:transport:<serial>`) seguido de
-   `shell:<cmd>`, no formato do protocolo host (`%04x` + payload ASCII)
-4. Lê a resposta como stream bruto até o servidor fechar a conexão
-5. Retorna a string pro Lua; `adb_free` libera a memória alocada em C
+Para serviços textuais, Lua chama a fachada C, que abre um socket TCP para o
+ADB server, envia o framing `%04x` + payload e interpreta `OKAY`/`FAIL`.
+Operações por device selecionam `host:transport:<serial>` ou
+`host:transport-any` antes do serviço (`shell:`, `root:`, etc.).
 
-## Limitações do esqueleto (próximos passos)
+`push` e `pull` entram no serviço `sync:`. A partir daí a conexão usa pacotes
+binários com IDs como `SEND`, `DATA`, `DONE`, `RECV`, `OKAY` e `FAIL`, e
+comprimentos little-endian de 32 bits. Essa camada fica isolada em
+`adb_sync.cpp`.
 
-- `serial = nil` usa `host:transport-any`, que só funciona com **um**
-  device conectado. Com múltiplos devices, defina `opts.serial` (você
-  pode obter os seriais com `:AdbDevices`).
-- Não implementa o subprotocolo `sync` (usado por `adb push`/`adb pull`),
-  que é binário e mais complexo que `shell:`/`host:devices`. Por ora, use
-  o `adb` normal pra isso.
-- Sem timeout de socket — se o `adb server` não responder, a chamada pode
-  travar o Neovim (bloqueante). Vale rodar via `vim.uv`/libuv assíncrono
-  numa próxima iteração, em vez de FFI síncrono direto na main thread.
-- Sem tratamento de auth USB (isso é responsabilidade do `adb server`,
-  que já lida com isso antes de você conectar no socket local).
+`AdbInstall` é uma conveniência Lua: faz `push` do APK para
+`/data/local/tmp`, executa `pm install -r` e remove o arquivo temporário.
+Ela cobre instalação simples de um APK; não pretende substituir ainda todos
+os modos modernos de `adb install`/`install-multiple`.
+
+## Limitações atuais
+
+- `serial = nil` usa `host:transport-any`; com vários devices configure
+  `opts.serial`.
+- chamadas FFI são síncronas e podem bloquear a main thread do Neovim;
+  ainda não há timeout de socket.
+- `push`/`pull` implementam transferência de arquivo simples, não toda a
+  superfície do protocolo sync (por exemplo, diretórios/STAT avançado).
+- `forward` usa especificações explícitas como `tcp:8080`; porta local
+  dinâmica `tcp:0` ainda não é tratada.
+- `install` cobre APK único por `push + pm install -r`; não cobre sessões de
+  instalação múltipla/streaming.
+- autenticação USB continua sendo responsabilidade do `adb server`.
 
 ## Licença
 
