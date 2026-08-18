@@ -4,7 +4,8 @@ CXXFLAGS := -std=c++17 -O2 -shared -fPIC -Wall -Wextra -Isrc
 SRCS     := src/adb_connection.cpp \
             src/adb_host.cpp \
             src/adb_transport.cpp \
-            src/adb_bridge_api.cpp
+            src/adb_bridge_api.cpp \
+            src/adb_sync.cpp
 
 OUT_DIR  := .
 OUT      := $(OUT_DIR)/adb_bridge.so
