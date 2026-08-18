@@ -135,3 +135,295 @@ os modos modernos de `adb install`/`install-multiple`.
 ## Licença
 
 MIT
+
+Com a expansão atual, os comandos seguem a sintaxe do adb tradicional, mas são executados pelo plugin dentro do Neovim.
+
+AdbPull
+
+Formato:
+
+:AdbPull <arquivo-remoto> <arquivo-local>
+
+Por exemplo, para copiar do Android:
+
+/sdcard/Download/teste.txt
+
+para o diretório atual:
+
+:AdbPull /sdcard/Download/teste.txt ./teste.txt
+
+É equivalente a:
+
+adb pull /sdcard/Download/teste.txt ./teste.txt
+
+Internamente o caminho é:
+
+:AdbPull
+   ↓
+M.pull()
+   ↓ FFI
+adb_pull()
+   ↓
+adb::sync::pull()
+   ↓
+sync:
+   ↓
+RECV
+   ↓
+DATA ...
+   ↓
+DONE
+
+AdbPush
+
+É o inverso:
+
+:AdbPush <arquivo-local> <arquivo-remoto>
+
+Exemplo:
+
+:AdbPush ./teste.txt /sdcard/Download/teste.txt
+
+equivalente a:
+
+adb push ./teste.txt /sdcard/Download/teste.txt
+
+Aqui o protocolo sync: envia aproximadamente:
+
+SEND
+ ↓
+DATA
+ ↓
+DATA
+ ↓
+...
+ ↓
+DONE
+ ↓
+OKAY
+
+AdbInstall
+
+Para instalar um APK:
+
+:AdbInstall ./app-debug.apk
+
+ou, com caminho absoluto:
+
+:AdbInstall /workspace/MyApp/app/build/outputs/apk/debug/app-debug.apk
+
+Nossa implementação faz:
+
+AdbInstall app-debug.apk
+        │
+        ├── AdbPush
+        │      ↓
+        │ /data/local/tmp/adb-bridge-*.apk
+        │
+        ├── shell pm install -r ...
+        │
+        └── rm do APK temporário
+
+Portanto ele já aproveita o push nativo que acabamos de conectar ao Lua.
+
+AdbForward
+
+Para encaminhar uma porta do computador para o Android:
+
+:AdbForward tcp:8080 tcp:8080
+
+equivale a:
+
+adb forward tcp:8080 tcp:8080
+
+Por exemplo, se existe um serviço no Android escutando 8080:
+
+PC                         Android
+
+localhost:8080
+      │
+      │ ADB forward
+      └──────────────────► localhost:8080
+                            no device
+
+Você acessa no computador:
+
+curl localhost:8080
+
+AdbUnroot
+
+Agora também existe:
+
+:AdbUnroot
+
+equivalente a:
+
+adb unroot
+
+Enquanto:
+
+:AdbRoot
+
+faz o contrário.
+
+AdbVersion
+
+Também expus o host:version que já existia no C++:
+
+:AdbVersion
+
+Ele consulta diretamente o servidor ADB, sem precisar de um dispositivo.
+
+
+---
+
+Você também pode chamar tudo diretamente em Lua, o que é particularmente útil para seus mappings e scripts:
+
+local adb = require("adb-bridge")
+
+adb.pull(
+  "/sdcard/Download/teste.txt",
+  "./teste.txt"
+)
+
+adb.push(
+  "./teste.txt",
+  "/sdcard/Download/teste.txt"
+)
+
+adb.install("./app-debug.apk")
+
+adb.forward("tcp:8080", "tcp:8080")
+
+adb.unroot()
+
+local version = adb.version()
+
+E os comandos antigos continuam funcionando normalmente, por exemplo:
+
+:AdbDevices
+:AdbDevicesL
+:AdbState
+:AdbShell ls -la /sdcard
+:AdbRoot
+:AdbUnroot
+:AdbRemount
+:AdbReboot
+:AdbReboot bootloader
+:AdbTcpip 5555
+:AdbTap 500 800
+:AdbSwipe 500 1200 500 300 400
+:AdbKeyevent KEYCODE_HOME
+:AdbText hello
+:AdbPm list packages
+:AdbUninstall com.example.app
+
+Para testar a expansão, eu começaria por AdbPush + AdbPull, porque são justamente a parte nova mais importante. Crie um arquivo pequeno no PC, envie para /sdcard/Download, confira com AdbShell cat, apague o original local e faça AdbPull de volta. Assim validamos todo o novo sync: de ponta a ponta.
+
+
+Sim. Toda a comunicação nativa do seu adb-bridge com o ADB server é feita por socket TCP.
+
+A arquitetura é:
+
+Neovim
+   │
+   │ LuaJIT FFI
+   ▼
+adb_bridge.so
+   │
+   │ socket TCP
+   ▼
+127.0.0.1:5037
+   │
+   ▼
+ADB Server
+   │
+   │ USB ou TCP/IP
+   ▼
+Android
+
+Onde o socket é criado
+
+No seu adb_connection.cpp:
+
+int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+Isso significa:
+
+AF_INET      → IPv4
+SOCK_STREAM  → TCP
+
+Depois:
+
+addr.sin_port = htons(5037);
+inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+e finalmente:
+
+connect(
+    fd,
+    reinterpret_cast<struct sockaddr *>(&addr),
+    sizeof(addr)
+);
+
+Portanto a .so estabelece uma conexão:
+
+127.0.0.1:<porta efêmera> ──TCP──► 127.0.0.1:5037
+                                      ADB server
+
+Inclusive AdbPush e AdbPull
+
+Sim. Eles também passam pelo mesmo socket TCP.
+
+A diferença é o protocolo usado dentro da conexão.
+
+Para um shell:
+
+TCP socket
+    │
+    ├── "host:transport:<serial>"
+    │
+    ├── OKAY
+    │
+    ├── "shell:ls /sdcard"
+    │
+    ├── OKAY
+    │
+    └── stream da resposta
+
+Para AdbPull:
+
+TCP socket
+    │
+    ├── host:transport:<serial>
+    ├── OKAY
+    │
+    ├── sync:
+    ├── OKAY
+    │
+    ├── RECV
+    ├── DATA
+    ├── DATA
+    ├── DATA
+    └── DONE
+
+E AdbPush:
+
+TCP socket
+    │
+    ├── host:transport:<serial>
+    ├── OKAY
+    │
+    ├── sync:
+    ├── OKAY
+    │
+    ├── SEND
+    ├── DATA
+    ├── DATA
+    ├── DONE
+    └── OKAY
+
+Ou seja, não usamos o executável adb para essas operações. O seu C++ está implementando diretamente partes do protocolo que o próprio cliente adb normalmente utilizaria para conversar com o servidor.
+
+Um detalhe importante: o socket TCP que implementamos é PC → ADB server local. A comunicação seguinte, ADB server → Android, pode ser USB ou TCP/IP. Essa segunda parte é responsabilidade do ADB server, não do seu plugin.
+
