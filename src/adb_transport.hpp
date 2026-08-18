@@ -21,6 +21,10 @@ std::string get_state(const std::string &serial);
 // houver, vem em out_message.
 bool root(const std::string &serial, std::string &out_message);
 
+// unroot: — desliga o modo root (equivalente a `adb unroot`), voltando
+// o adbd a rodar como usuário normal (shell).
+bool unroot(const std::string &serial, std::string &out_message);
+
 // remount: — remonta partições do sistema como read-write.
 bool remount(const std::string &serial, std::string &out_message);
 
@@ -29,5 +33,11 @@ bool reboot(const std::string &serial, const std::string &mode, std::string &out
 
 // tcpip:<port> — coloca o device em modo adb-over-network na porta dada.
 bool tcpip(const std::string &serial, int port, std::string &out_message);
+
+// host[-serial:<serial>]:forward:<local>;<remote> — port forwarding,
+// ex.: local_spec="tcp:8080", remote_spec="tcp:8080". Não suporta porta
+// local dinâmica (tcp:0); use uma porta fixa.
+bool forward(const std::string &serial, const std::string &local_spec,
+             const std::string &remote_spec, std::string &out_message);
 
 } // namespace adb::transport
