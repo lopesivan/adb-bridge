@@ -50,6 +50,16 @@ public:
     // host:devices, host:devices-l etc.
     std::string read_framed();
 
+    // ---- primitivas binárias cruas (usadas pelo protocolo sync:, que é
+    // binário little-endian — diferente do framing hex-ASCII acima) ----
+
+    // Escreve exatamente `len` bytes. Retorna false em falha/short write.
+    bool write_raw(const void *data, size_t len);
+
+    // Lê exatamente `len` bytes. Retorna false em EOF/erro antes de
+    // completar (short read não é sucesso parcial, é falha).
+    bool read_raw(void *buf, size_t len);
+
 private:
     int fd_;
 };
