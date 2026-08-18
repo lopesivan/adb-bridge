@@ -99,6 +99,66 @@ function M.setup(opts)
     vim.api.nvim_create_user_command("AdbTcpip", function(cmdopts)
         M.tcpip(tonumber(cmdopts.args))
     end, { nargs = 1, desc = "Ativa adb via rede na porta dada (adb tcpip <porta>)" })
+
+    -- Atalhos construídos sobre o serviço shell: já existente. Eles não
+    -- exigem novas funções na biblioteca C++.
+    vim.api.nvim_create_user_command("AdbInput", function(cmdopts)
+        M.input(cmdopts.args)
+    end, { nargs = "+", desc = "Executa input no device" })
+
+    vim.api.nvim_create_user_command("AdbSettings", function(cmdopts)
+        M.settings(cmdopts.args)
+    end, { nargs = "+", desc = "Consulta ou altera settings do Android" })
+
+    vim.api.nvim_create_user_command("AdbUiAutomator", function(cmdopts)
+        M.uiautomator(cmdopts.args)
+    end, { nargs = "+", desc = "Executa uiautomator no device" })
+
+    vim.api.nvim_create_user_command("AdbAm", function(cmdopts)
+        M.am(cmdopts.args)
+    end, { nargs = "+", desc = "Executa o Activity Manager (am)" })
+
+    vim.api.nvim_create_user_command("AdbPm", function(cmdopts)
+        M.pm(cmdopts.args)
+    end, { nargs = "+", desc = "Executa o Package Manager (pm)" })
+
+    vim.api.nvim_create_user_command("AdbStart", function(cmdopts)
+        M.start(cmdopts.args)
+    end, { nargs = "+", desc = "Inicia uma Activity com am start" })
+
+    vim.api.nvim_create_user_command("AdbTap", function(cmdopts)
+        M.tap(cmdopts.fargs[1], cmdopts.fargs[2])
+    end, { nargs = 2, desc = "Simula toque: AdbTap <x> <y>" })
+
+    vim.api.nvim_create_user_command("AdbKeyevent", function(cmdopts)
+        M.keyevent(cmdopts.args)
+    end, { nargs = 1, desc = "Envia tecla: AdbKeyevent <código|KEYCODE_*>" })
+
+    vim.api.nvim_create_user_command("AdbSwipe", function(cmdopts)
+        if #cmdopts.fargs < 4 or #cmdopts.fargs > 5 then
+            vim.notify(
+                "[adb-bridge] uso: AdbSwipe <x1> <y1> <x2> <y2> [duração_ms]",
+                vim.log.levels.ERROR
+            )
+            return
+        end
+
+        M.swipe(
+            cmdopts.fargs[1],
+            cmdopts.fargs[2],
+            cmdopts.fargs[3],
+            cmdopts.fargs[4],
+            cmdopts.fargs[5]
+        )
+    end, { nargs = "+", desc = "Simula gesto: AdbSwipe <x1> <y1> <x2> <y2> [ms]" })
+
+    vim.api.nvim_create_user_command("AdbText", function(cmdopts)
+        M.text(cmdopts.args)
+    end, { nargs = "+", desc = "Digita texto no device" })
+
+    vim.api.nvim_create_user_command("AdbUninstall", function(cmdopts)
+        M.uninstall(cmdopts.args)
+    end, { nargs = "+", desc = "Desinstala pacote com pm uninstall" })
 end
 
 function M.shell(cmd)
@@ -130,6 +190,58 @@ function M.get_state()
     local result = take_and_free(lib.adb_get_state(c_serial()))
     M.show_output("adb get-state", result)
     return result
+end
+
+-- Wrappers Lua exportados. Todos reutilizam adb_shell()/shell: e, portanto,
+-- não acrescentam símbolos à API C++/FFI.
+function M.input(arguments)
+    return M.shell("input " .. arguments)
+end
+
+function M.settings(arguments)
+    return M.shell("settings " .. arguments)
+end
+
+function M.uiautomator(arguments)
+    return M.shell("uiautomator " .. arguments)
+end
+
+function M.am(arguments)
+    return M.shell("am " .. arguments)
+end
+
+function M.pm(arguments)
+    return M.shell("pm " .. arguments)
+end
+
+function M.start(arguments)
+    return M.am("start " .. arguments)
+end
+
+function M.tap(x, y)
+    return M.input(string.format("tap %s %s", x, y))
+end
+
+function M.keyevent(key)
+    return M.input("keyevent " .. key)
+end
+
+function M.swipe(x1, y1, x2, y2, duration)
+    local arguments = string.format("swipe %s %s %s %s", x1, y1, x2, y2)
+
+    if duration and duration ~= "" then
+        arguments = arguments .. " " .. duration
+    end
+
+    return M.input(arguments)
+end
+
+function M.text(value)
+    return M.input("text " .. value)
+end
+
+function M.uninstall(arguments)
+    return M.pm("uninstall " .. arguments)
 end
 
 -- Comandos "fire-and-forget" (root, remount, reboot, tcpip) retornam
