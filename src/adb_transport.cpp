@@ -73,6 +73,11 @@ bool root(const std::string &serial, std::string &out_message)
     return transport_command(serial, "root:", out_message);
 }
 
+bool unroot(const std::string &serial, std::string &out_message)
+{
+    return transport_command(serial, "unroot:", out_message);
+}
+
 bool remount(const std::string &serial, std::string &out_message)
 {
     return transport_command(serial, "remount:", out_message);
@@ -86,6 +91,34 @@ bool reboot(const std::string &serial, const std::string &mode, std::string &out
 bool tcpip(const std::string &serial, int port, std::string &out_message)
 {
     return transport_command(serial, "tcpip:" + std::to_string(port), out_message);
+}
+
+bool forward(const std::string &serial, const std::string &local_spec,
+             const std::string &remote_spec, std::string &out_message)
+{
+    Connection conn;
+    if (!conn.valid())
+    {
+        out_message = "nao foi possivel conectar ao adb server";
+        return false;
+    }
+
+    // forward: não usa host:transport: — o serial vai embutido no próprio
+    // comando host-serial:<serial>:forward:... (ou host:forward:... sem
+    // serial, pro device único conectado).
+    std::string cmd = (serial.empty() ? std::string("host:forward:")
+                                       : "host-serial:" + serial + ":forward:") +
+                       local_spec + ";" + remote_spec;
+
+    std::string err;
+    if (!conn.send_request(cmd) || conn.read_status(err) != Status::Okay)
+    {
+        out_message = "forward falhou: " + (err.empty() ? std::string("desconhecido") : err);
+        return false;
+    }
+
+    out_message = local_spec + " -> " + remote_spec;
+    return true;
 }
 
 } // namespace adb::transport
