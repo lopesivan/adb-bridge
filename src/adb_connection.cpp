@@ -153,4 +153,28 @@ std::string Connection::read_framed()
     return buf;
 }
 
+bool Connection::write_raw(const void *data, size_t len)
+{
+    if (fd_ < 0)
+        return false;
+    return write(fd_, data, len) == static_cast<ssize_t>(len);
+}
+
+bool Connection::read_raw(void *buf, size_t len)
+{
+    if (fd_ < 0)
+        return false;
+
+    size_t total = 0;
+    char *p = static_cast<char *>(buf);
+    while (total < len)
+    {
+        ssize_t n = read(fd_, p + total, len - total);
+        if (n <= 0)
+            return false; // EOF ou erro antes de completar: falha
+        total += static_cast<size_t>(n);
+    }
+    return true;
+}
+
 } // namespace adb
