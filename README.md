@@ -1,14 +1,33 @@
-# adb-bridge (esqueleto)
+# adb-bridge
 
 Plugin para Neovim que fala diretamente com o `adb server` local
 (`127.0.0.1:5037`) via protocolo host do ADB, usando LuaJIT FFI. Evita
-fork+exec do binário `adb` a cada chamada.
+fork+exec do binário `adb` a cada chamada. Implementado em C++17.
 
 ## Requisitos
 
-- `gcc`
+- `g++` com suporte a C++17
 - `adb server` rodando (`adb start-server` — geralmente já está, se você
   usa o SDK do Android normalmente)
+
+## Estrutura do projeto
+
+```
+src/
+├── adb_connection.hpp/.cpp  -- RAII: socket + framing do protocolo (base)
+├── adb_host.hpp/.cpp        -- serviços "host:" (devices, devices-l, version)
+├── adb_transport.hpp/.cpp   -- serviços por-device (shell, root, remount, reboot, tcpip)
+└── adb_bridge_api.cpp       -- fachada extern "C", único arquivo visível pra FFI
+```
+
+Pra adicionar um serviço novo do protocolo adb:
+1. Função nova em `adb_host.cpp` ou `adb_transport.cpp` (conforme o caso)
+2. Wrapper `extern "C"` em `adb_bridge_api.cpp` (converte `std::string` → `char*`)
+3. Entrada no `ffi.cdef` de `lua/adb-bridge/init.lua`
+4. Função Lua + `:UserCommand` correspondente
+
+A classe `adb::Connection` (em `adb_connection.hpp`) nunca precisa mudar —
+ela só implementa o framing do protocolo, não os comandos específicos.
 
 ## Build
 
@@ -24,6 +43,13 @@ Gera `adb_bridge.so` na raiz do projeto.
 :AdbShell ls
 :AdbShell ls -la /sdcard
 :AdbDevices
+:AdbDevicesL
+:AdbState
+:AdbRoot
+:AdbRemount
+:AdbReboot
+:AdbReboot bootloader
+:AdbTcpip 5555
 ```
 
 Cada comando abre um split horizontal scratch com a saída.
