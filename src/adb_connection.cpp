@@ -4,6 +4,7 @@
 
 #include <arpa/inet.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -29,7 +30,12 @@ Connection::Connection() : fd_(-1)
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(kAdbPort);
-    inet_pton(AF_INET, kAdbHost, &addr.sin_addr);
+
+    if (inet_pton(AF_INET, kAdbHost, &addr.sin_addr) != 1)
+    {
+        close(fd);
+        return;
+    }
 
     if (connect(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0)
     {
@@ -64,27 +70,23 @@ Connection &Connection::operator=(Connection &&other) noexcept
 
 bool Connection::send_request(const std::string &payload)
 {
-    if (fd_ < 0)
+    if (fd_ < 0 || payload.size() > 0xffffu)
         return false;
 
     char header[5];
-    unsigned int len = static_cast<unsigned int>(payload.size() & 0xffffu);
-    std::snprintf(header, sizeof(header), "%04x", len);
+    std::snprintf(header, sizeof(header), "%04x", static_cast<unsigned int>(payload.size()));
 
-    if (write(fd_, header, 4) != 4)
-        return false;
-    if (write(fd_, payload.data(), payload.size()) != static_cast<ssize_t>(payload.size()))
-        return false;
-    return true;
+    return write_raw(header, 4) && write_raw(payload.data(), payload.size());
 }
 
 Status Connection::read_status(std::string &err_message)
 {
+    err_message.clear();
     if (fd_ < 0)
         return Status::IoError;
 
     char status[4];
-    if (read(fd_, status, 4) != 4)
+    if (!read_raw(status, sizeof(status)))
         return Status::IoError;
 
     if (std::memcmp(status, "OKAY", 4) == 0)
@@ -93,19 +95,20 @@ Status Connection::read_status(std::string &err_message)
     if (std::memcmp(status, "FAIL", 4) == 0)
     {
         char lenhex[5] = {0};
-        if (read(fd_, lenhex, 4) == 4)
+        if (!read_raw(lenhex, 4))
+            return Status::IoError;
+
+        char *end = nullptr;
+        unsigned long msglen = std::strtoul(lenhex, &end, 16);
+        if (end != lenhex + 4)
+            return Status::IoError;
+
+        if (msglen > 0)
         {
-            long msglen = std::strtol(lenhex, nullptr, 16);
-            if (msglen > 0)
-            {
-                std::string buf(static_cast<size_t>(msglen), '\0');
-                ssize_t n = read(fd_, buf.data(), buf.size());
-                if (n > 0)
-                {
-                    buf.resize(static_cast<size_t>(n));
-                    err_message = buf;
-                }
-            }
+            std::string buf(static_cast<size_t>(msglen), '\0');
+            if (!read_raw(buf.data(), buf.size()))
+                return Status::IoError;
+            err_message = std::move(buf);
         }
         return Status::Fail;
     }
@@ -133,23 +136,17 @@ std::string Connection::read_framed()
         return {};
 
     char lenhex[5] = {0};
-    if (read(fd_, lenhex, 4) != 4)
+    if (!read_raw(lenhex, 4))
         return {};
 
-    long msglen = std::strtol(lenhex, nullptr, 16);
-    if (msglen < 0)
+    char *end = nullptr;
+    unsigned long msglen = std::strtoul(lenhex, &end, 16);
+    if (end != lenhex + 4)
         return {};
 
     std::string buf(static_cast<size_t>(msglen), '\0');
-    size_t total = 0;
-    while (total < buf.size())
-    {
-        ssize_t n = read(fd_, buf.data() + total, buf.size() - total);
-        if (n <= 0)
-            break;
-        total += static_cast<size_t>(n);
-    }
-    buf.resize(total);
+    if (!buf.empty() && !read_raw(buf.data(), buf.size()))
+        return {};
     return buf;
 }
 
@@ -157,7 +154,17 @@ bool Connection::write_raw(const void *data, size_t len)
 {
     if (fd_ < 0)
         return false;
-    return write(fd_, data, len) == static_cast<ssize_t>(len);
+
+    size_t total = 0;
+    const char *p = static_cast<const char *>(data);
+    while (total < len)
+    {
+        ssize_t n = write(fd_, p + total, len - total);
+        if (n <= 0)
+            return false;
+        total += static_cast<size_t>(n);
+    }
+    return true;
 }
 
 bool Connection::read_raw(void *buf, size_t len)
@@ -171,7 +178,7 @@ bool Connection::read_raw(void *buf, size_t len)
     {
         ssize_t n = read(fd_, p + total, len - total);
         if (n <= 0)
-            return false; // EOF ou erro antes de completar: falha
+            return false;
         total += static_cast<size_t>(n);
     }
     return true;
