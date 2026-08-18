@@ -1,7 +1,11 @@
-CC       := gcc
-CFLAGS   := -std=c11 -O2 -shared -fPIC -Wall -Wextra
+CXX      := g++
+CXXFLAGS := -std=c++17 -O2 -shared -fPIC -Wall -Wextra -Isrc
 
-SRC      := src/adb_bridge.c
+SRCS     := src/adb_connection.cpp \
+            src/adb_host.cpp \
+            src/adb_transport.cpp \
+            src/adb_bridge_api.cpp
+
 OUT_DIR  := .
 OUT      := $(OUT_DIR)/adb_bridge.so
 
@@ -10,11 +14,11 @@ OUT      := $(OUT_DIR)/adb_bridge.so
 all: install
 
 check-deps:
-	@command -v gcc >/dev/null || (echo "ERRO: gcc não encontrado" && exit 1)
+	@command -v g++ >/dev/null || (echo "ERRO: g++ não encontrado" && exit 1)
 
 install: check-deps
 	@mkdir -p $(OUT_DIR)
-	$(CC) $(CFLAGS) -o $(OUT) $(SRC)
+	$(CXX) $(CXXFLAGS) -o $(OUT) $(SRCS)
 	@echo "✓ Instalado em $(OUT)"
 
 clean:
